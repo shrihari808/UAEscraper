@@ -30,6 +30,8 @@ ANALYSIS_OUTPUT_DIR = "analysisJsons" # New directory for JSON outputs
 NO_OF_POSTS_TO_SCRAPE = 10
 # Number of news articles to scrape per company
 NO_OF_NEWS_ARTICLES_TO_SCRAPE = 2
+# Number of website pages to scrape per company
+NO_OF_WEBSITE_PAGES_TO_SCRAPE = 5
 # Number of companies to sample for processing in each run
 # Set to None to process all companies
 SAMPLE_SIZE = 5

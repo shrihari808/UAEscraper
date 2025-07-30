@@ -13,12 +13,13 @@ import config
 import utils
 from modules.url_finder import URLFinder
 from modules.linkedin_scraper import LinkedInScraper
+from modules.website_scraper import WebsiteScraper
 from modules.news_scraper import NewsScraper
 from modules.analysis_engine import AnalysisEngine
 
 def step_1_find_urls(df, client):
-    """Finds and verifies LinkedIn URLs for companies."""
-    print("\n--- Step 1: Finding LinkedIn URLs ---")
+    """Finds and verifies LinkedIn and website URLs for companies."""
+    print("\n--- Step 1: Finding LinkedIn & Website URLs ---")
     finder = URLFinder(openai_client=client)
     enriched_df = finder.process_companies(df)
     enriched_df.to_csv(config.OUTPUT_CSV_LINKEDIN, index=False)
@@ -41,7 +42,6 @@ def step_2_scrape_linkedin(df, vector_store):
     scraper.close()
 
     if all_documents:
-        # FIX: Filter out documents with empty or whitespace-only content to prevent embedding errors.
         valid_documents = [doc for doc in all_documents if doc.page_content and doc.page_content.strip()]
         
         if valid_documents:
@@ -52,9 +52,34 @@ def step_2_scrape_linkedin(df, vector_store):
         else:
             print("\n- No valid documents with content found from LinkedIn to add to the knowledge base.")
 
-def step_3_scrape_news(df, vector_store):
+def step_3_scrape_websites(df, vector_store):
+    """Scrapes company websites and adds them to the vector store."""
+    print("\n--- Step 3: Scraping Company Websites ---")
+    scraper = WebsiteScraper()
+    
+    all_documents = []
+    for _, row in df.iterrows():
+        company_name = row['Cleaned Name']
+        website_url = row.get('website_url') 
+        print(f"\nProcessing Website for: {company_name}")
+        documents = scraper.scrape_website(company_name, website_url)
+        all_documents.extend(documents)
+    scraper.close()
+
+    if all_documents:
+        valid_documents = [doc for doc in all_documents if doc.page_content and doc.page_content.strip()]
+        
+        if valid_documents:
+            print(f"  -> Found {len(valid_documents)} valid website pages to add to the knowledge base.")
+            vector_store.add_documents(valid_documents)
+            vector_store.save_local(config.FAISS_INDEX_PATH)
+            print("\n✅ Step 3 Complete. Website data vectorized and saved.")
+        else:
+            print("\n- No valid content found from websites to add to the knowledge base.")
+
+def step_4_scrape_news(df, vector_store):
     """Scrapes news articles and adds them to the vector store."""
-    print("\n--- Step 3: Scraping News Articles ---")
+    print("\n--- Step 4: Scraping News Articles ---")
     scraper = NewsScraper()
     
     all_documents = []
@@ -66,31 +91,27 @@ def step_3_scrape_news(df, vector_store):
     scraper.close()
 
     if all_documents:
-        # FIX: Filter out documents with empty or whitespace-only content to prevent embedding errors.
         valid_documents = [doc for doc in all_documents if doc.page_content and doc.page_content.strip()]
         
         if valid_documents:
             print(f"  -> Found {len(valid_documents)} valid news articles to add to the knowledge base.")
             vector_store.add_documents(valid_documents)
             vector_store.save_local(config.FAISS_INDEX_PATH)
-            print("\n✅ Step 3 Complete. News data vectorized and saved.")
+            print("\n✅ Step 4 Complete. News data vectorized and saved.")
         else:
             print("\n- No valid news articles with content found to add to the knowledge base.")
 
-
-def step_4_analyze_company(company_name, llm, vector_store):
+def step_5_analyze_company(company_name, llm, vector_store):
     """Analyzes a single company using the LangChain RAG chain."""
-    print(f"\n--- Step 4: Analyzing '{company_name}' ---")
+    print(f"\n--- Step 5: Analyzing '{company_name}' ---")
     engine = AnalysisEngine(llm=llm, vector_store=vector_store)
     
     analysis_result = engine.analyze(company_name)
     if analysis_result:
-        # Create the output directory if it doesn't exist
         if not os.path.exists(config.ANALYSIS_OUTPUT_DIR):
             os.makedirs(config.ANALYSIS_OUTPUT_DIR)
             print(f"   -> Created directory: {config.ANALYSIS_OUTPUT_DIR}")
 
-        # Define the output filename within the new directory
         output_filename = os.path.join(config.ANALYSIS_OUTPUT_DIR, f"{company_name.replace(' ', '_')}_analysis.json")
         
         with open(output_filename, "w") as f:
@@ -102,10 +123,11 @@ def step_4_analyze_company(company_name, llm, vector_store):
 def main():
     """Main function to parse arguments and run the selected pipeline steps."""
     parser = argparse.ArgumentParser(description="Fintech Founder Finder Pipeline")
-    parser.add_argument('--find-urls', action='store_true', help="Run Step 1: Find and verify LinkedIn URLs.")
+    parser.add_argument('--find-urls', action='store_true', help="Run Step 1: Find LinkedIn and website URLs.")
     parser.add_argument('--scrape-linkedin', action='store_true', help="Run Step 2: Scrape LinkedIn profiles and vectorize.")
-    parser.add_argument('--scrape-news', action='store_true', help="Run Step 3: Scrape news articles and vectorize.")
-    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 4: Analyze a specific company using the existing knowledge base.")
+    parser.add_argument('--scrape-websites', action='store_true', help="Run Step 3: Scrape company websites and vectorize.")
+    parser.add_argument('--scrape-news', action='store_true', help="Run Step 4: Scrape news articles and vectorize.")
+    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 5: Analyze a specific company using the existing knowledge base.")
     
     args = parser.parse_args()
 
@@ -120,7 +142,7 @@ def main():
         if initial_df is not None:
             step_1_find_urls(initial_df, openai_client)
 
-    if args.scrape_linkedin or args.scrape_news:
+    if args.scrape_linkedin or args.scrape_websites or args.scrape_news:
         enriched_df = utils.load_enriched_data(config.OUTPUT_CSV_LINKEDIN)
         if enriched_df is None:
             print("Cannot run scraping. Please run with --find-urls first to generate the required input file.")
@@ -136,22 +158,24 @@ def main():
         if args.scrape_linkedin:
             step_2_scrape_linkedin(sample_df, vector_store)
         
+        if args.scrape_websites:
+            step_3_scrape_websites(sample_df, vector_store)
+        
         if args.scrape_news:
-            step_3_scrape_news(sample_df, vector_store)
+            step_4_scrape_news(sample_df, vector_store)
 
     if args.analyze:
         if not os.path.exists(config.FAISS_INDEX_PATH):
-             print("Knowledge base not found. Please run a scrape command (--scrape-linkedin or --scrape-news) first.")
+             print("Knowledge base not found. Please run a scrape command first.")
              return
         
         llm = utils.get_llm()
         if not llm: return
         
         vector_store = utils.get_vector_store()
-        step_4_analyze_company(args.analyze, llm, vector_store)
+        step_5_analyze_company(args.analyze, llm, vector_store)
 
     print("\n\n🎉 --- Pipeline Finished --- 🎉")
-
 
 if __name__ == "__main__":
     main()
@@ -160,6 +184,8 @@ if __name__ == "__main__":
  python main.py --find-urls --scrape-linkedin --scrape-news --analyze
  python main.py --help
  python main.py --scrape-linkedin --scrape-news
+ python main.py --find-urls
+ python main.py --scrape-websites
  python main.py --analyze "Company Name"
 
 """
