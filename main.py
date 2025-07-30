@@ -148,7 +148,11 @@ def main():
             print("Cannot run scraping. Please run with --find-urls first to generate the required input file.")
             return
 
-        sample_df = enriched_df.sample(n=config.SAMPLE_SIZE, random_state=42) if config.SAMPLE_SIZE and len(enriched_df) > config.SAMPLE_SIZE else enriched_df
+        # --- FIX: Logic now uses both SAMPLE_SIZE and RANDOM_STATE from config ---
+        if config.SAMPLE_SIZE and len(enriched_df) > config.SAMPLE_SIZE:
+            sample_df = enriched_df.sample(n=config.SAMPLE_SIZE, random_state=config.RANDOM_STATE)
+        else:
+            sample_df = enriched_df
         
         print(f"\nWill now process a sample of {len(sample_df)} companies for scraping:")
         for name in sample_df['Cleaned Name']: print(f"  - {name}")
@@ -156,12 +160,25 @@ def main():
         vector_store = utils.get_vector_store()
         
         if args.scrape_linkedin:
-            step_2_scrape_linkedin(sample_df, vector_store)
-        
+            # --- FIX: Filter the dataframe to ONLY include rows with valid LinkedIn URLs for the LinkedIn scraper ---
+            linkedin_df = sample_df.dropna(subset=['linkedin_url'])
+            linkedin_df = linkedin_df[linkedin_df['linkedin_url'].str.contains('linkedin.com', na=False)]
+            if not linkedin_df.empty:
+                step_2_scrape_linkedin(linkedin_df, vector_store)
+            else:
+                print("\n- No valid LinkedIn URLs found in the sample to scrape.")
+
         if args.scrape_websites:
-            step_3_scrape_websites(sample_df, vector_store)
+            # --- FIX: Filter the dataframe to ONLY include rows with valid website URLs for the website scraper ---
+            website_df = sample_df.dropna(subset=['website_url'])
+            website_df = website_df[website_df['website_url'].str.startswith('http', na=False)]
+            if not website_df.empty:
+                step_3_scrape_websites(website_df, vector_store)
+            else:
+                print("\n- No valid website URLs found in the sample to scrape.")
         
         if args.scrape_news:
+            # News scraper only needs the company name, so no filtering is required
             step_4_scrape_news(sample_df, vector_store)
 
     if args.analyze:
@@ -179,13 +196,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-"""
- python main.py --find-urls --scrape-linkedin --scrape-news --analyze
- python main.py --help
- python main.py --scrape-linkedin --scrape-news
- python main.py --find-urls
- python main.py --scrape-websites
- python main.py --analyze "Company Name"
-
-"""

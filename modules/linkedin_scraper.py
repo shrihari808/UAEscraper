@@ -56,6 +56,11 @@ class LinkedInScraper:
             print("Driver not initialized. Aborting scrape.")
             return []
 
+        # --- FIX: Add a failsafe to ensure the provided URL is a valid LinkedIn company URL ---
+        if not company_url or not isinstance(company_url, str) or "linkedin.com/company/" not in company_url:
+            print(f"    ⚠️  Invalid or missing LinkedIn URL for '{company_name}'. Skipping.")
+            return []
+
         documents = []
         wait = WebDriverWait(self.driver, 10)
         

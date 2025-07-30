@@ -35,6 +35,8 @@ NO_OF_WEBSITE_PAGES_TO_SCRAPE = 5
 # Number of companies to sample for processing in each run
 # Set to None to process all companies
 SAMPLE_SIZE = 5
+# The random state to use for reproducible sampling
+RANDOM_STATE = 99
 
 # --- Vectorization ---
 # Updated to use FinBERT for more accurate financial text embeddings
