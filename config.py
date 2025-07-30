@@ -40,6 +40,10 @@ SAMPLE_SIZE = 5
 # The random state to use for reproducible sampling
 RANDOM_STATE = 99
 
+# --- NEW: Job Board Scraping ---
+# Number of job postings to scrape per board for each company
+NO_OF_JOBS_TO_SCRAPE = 5
+
 # --- Vectorization ---
 # Updated to use FinBERT for more accurate financial text embeddings
 EMBEDDING_MODEL = 'ProsusAI/finbert'

@@ -15,7 +15,8 @@ from modules.url_finder import URLFinder
 from modules.linkedin_scraper import LinkedInScraper
 from modules.website_scraper import WebsiteScraper
 from modules.news_scraper import NewsScraper
-from modules.app_scraper import AppScraper # New import
+from modules.app_scraper import AppScraper
+from modules.job_scraper import JobBoardScraper
 from modules.analysis_engine import AnalysisEngine
 
 def step_1_find_urls(df, client):
@@ -116,7 +117,6 @@ def step_5_scrape_apps(df, vector_store):
     scraper.close()
 
     if all_documents:
-        # App scraper returns pre-filtered, valid documents
         print(f"  -> Found {len(all_documents)} valid app records to add to the knowledge base.")
         vector_store.add_documents(all_documents)
         vector_store.save_local(config.FAISS_INDEX_PATH)
@@ -124,9 +124,32 @@ def step_5_scrape_apps(df, vector_store):
     else:
         print("\n- No app store data found to add to the knowledge base.")
 
-def step_6_analyze_company(company_name, llm, vector_store):
+def step_6_scrape_jobs(df, vector_store):
+    """Scrapes job boards and adds them to the vector store."""
+    print("\n--- Step 6: Scraping Job Boards ---")
+    scraper = JobBoardScraper()
+    
+    all_documents = []
+    for _, row in df.iterrows():
+        company_name = row['Cleaned Name']
+        print(f"\nProcessing Job Boards for: {company_name}")
+        documents = scraper.scrape_jobs(company_name)
+        all_documents.extend(documents)
+    scraper.close()
+
+    if all_documents:
+        valid_documents = [doc for doc in all_documents if doc.page_content and doc.page_content.strip()]
+        if valid_documents:
+            print(f"  -> Found {len(valid_documents)} valid job postings to add to the knowledge base.")
+            vector_store.add_documents(valid_documents)
+            vector_store.save_local(config.FAISS_INDEX_PATH)
+            print("\n✅ Step 6 Complete. Job posting data vectorized and saved.")
+        else:
+            print("\n- No valid content found from job postings to add to the knowledge base.")
+
+def step_7_analyze_company(company_name, llm, vector_store):
     """Analyzes a single company using the LangChain RAG chain."""
-    print(f"\n--- Step 6: Analyzing '{company_name}' ---")
+    print(f"\n--- Step 7: Analyzing '{company_name}' ---")
     engine = AnalysisEngine(llm=llm, vector_store=vector_store)
     
     analysis_result = engine.analyze(company_name)
@@ -150,8 +173,9 @@ def main():
     parser.add_argument('--scrape-linkedin', action='store_true', help="Run Step 2: Scrape LinkedIn profiles and vectorize.")
     parser.add_argument('--scrape-websites', action='store_true', help="Run Step 3: Scrape company websites and vectorize.")
     parser.add_argument('--scrape-news', action='store_true', help="Run Step 4: Scrape news articles and vectorize.")
-    parser.add_argument('--scrape-apps', action='store_true', help="Run Step 5: Scrape App Stores and vectorize.") # New argument
-    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 6: Analyze a specific company.")
+    parser.add_argument('--scrape-apps', action='store_true', help="Run Step 5: Scrape App Stores and vectorize.")
+    parser.add_argument('--scrape-jobs', action='store_true', help="Run Step 6: Scrape job boards and vectorize.")
+    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 7: Analyze a specific company.")
     
     args = parser.parse_args()
 
@@ -166,8 +190,7 @@ def main():
         if initial_df is not None:
             step_1_find_urls(initial_df, openai_client)
 
-    # Logic for scraping steps
-    if args.scrape_linkedin or args.scrape_websites or args.scrape_news or args.scrape_apps:
+    if args.scrape_linkedin or args.scrape_websites or args.scrape_news or args.scrape_apps or args.scrape_jobs:
         enriched_df = utils.load_enriched_data(config.OUTPUT_CSV_LINKEDIN)
         if enriched_df is None:
             print("Cannot run scraping. Please run with --find-urls first to generate the required input file.")
@@ -202,8 +225,11 @@ def main():
         if args.scrape_news:
             step_4_scrape_news(sample_df, vector_store)
         
-        if args.scrape_apps: # New step execution
+        if args.scrape_apps:
             step_5_scrape_apps(sample_df, vector_store)
+        
+        if args.scrape_jobs:
+            step_6_scrape_jobs(sample_df, vector_store)
 
     if args.analyze:
         if not os.path.exists(config.FAISS_INDEX_PATH):
@@ -214,7 +240,12 @@ def main():
         if not llm: return
         
         vector_store = utils.get_vector_store()
-        step_6_analyze_company(args.analyze, llm, vector_store)
+        
+        # --- FIX: Clean the input company name to match the metadata format ---
+        cleaned_company_name = utils.clean_company_name(args.analyze)
+        print(f"\nAnalyzing with cleaned name: '{cleaned_company_name}'")
+        
+        step_7_analyze_company(cleaned_company_name, llm, vector_store)
 
     print("\n\n🎉 --- Pipeline Finished --- 🎉")
 

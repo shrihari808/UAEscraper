@@ -6,21 +6,36 @@ Utility functions for data handling, API clients, and the LangChain vector store
 
 import pandas as pd
 import os
+import re # Import re module
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 
 import config
 
+# --- REVISED: Centralized Cleaning Function ---
+def clean_company_name(name):
+    """
+    Applies a standard, more robust cleaning process to a company name
+    to ensure consistency across scraping and analysis.
+    """
+    if not isinstance(name, str):
+        return ""
+    # ADDED 'Company' to the list of suffixes to be removed by the regex.
+    # This is the key fix.
+    suffixes_to_remove = r'\s*\b(P\.J\.S\.C|PJSC|P\.S\.C|PSC|L\.L\.C|LLC|FZ|DMCC|F\.Z|PLC|Limited|Company)\b.*'
+    name = re.sub(suffixes_to_remove, '', name, flags=re.IGNORECASE)
+    # Remove special characters and extra whitespace
+    name = re.sub(r'[.&,]', '', name)
+    return name.strip()
+
 # --- Data Loading ---
 def load_and_clean_companies(csv_path):
     """Loads and cleans company data from a CSV file."""
     try:
         df = pd.read_csv(csv_path)
-        df['Cleaned Name'] = df['Institution Name'].str.replace(
-            r'\s*\b(P\.J\.S\.C|PJSC|P\.S\.C|PSC|L\.L\.C|LLC|FZ|DMCC|F\.Z|PLC|Limited)\b.*', '', regex=True
-        )
-        df['Cleaned Name'] = df['Cleaned Name'].str.replace(r'[.&]', '', regex=True).str.strip()
+        # Use the revised centralized cleaning function
+        df['Cleaned Name'] = df['Institution Name'].apply(clean_company_name)
         return df
     except FileNotFoundError:
         print(f"Error: The file '{csv_path}' was not found.")
