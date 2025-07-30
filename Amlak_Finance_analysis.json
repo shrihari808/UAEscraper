@@ -1,0 +1,40 @@
+{
+    "Company Metadata": {
+        "Sector": "Finance/Real Estate",
+        "Location": "Dubai, UAE",
+        "Stage": "Established"
+    },
+    "Product & Platform Requirements": {
+        "What are they building?": "Real estate finance solutions, including Islamic financing and mortgage products.",
+        "Key technologies": "Fintech platforms, Mobile applications, Blockchain integration.",
+        "Development stage": "Active; ongoing product enhancement and service expansion."
+    },
+    "AI & Cloud Strategy": {
+        "AI implementation": "Utilizing AI for risk assessment, customer profiling, and streamlined operations.",
+        "Cloud usage": "Adopting cloud infrastructure for secure data storage and scalable platform operations."
+    },
+    "Digital Transformation & Inclusion": {
+        "Digitization intent": "Strong intent to digitize services and improve customer experience through technology.",
+        "Inclusion focus": "Providing financial access to underserved populations with specific products targeting them."
+    },
+    "Partnerships & Events": {
+        "Collaborations": "In discussions with tech companies for potential partnerships in AI and financial services.",
+        "Events attended": "Participated in Fintech Expo 2023 and various blockchain conferences."
+    },
+    "Decision Makers": {
+        "Key people": [
+            {
+                "Name": "Mohammed Al Fares",
+                "Role": "CEO"
+            },
+            {
+                "Name": "Sara Al Suwaidi",
+                "Role": "CTO"
+            },
+            {
+                "Name": "Fatima Al Mansoori",
+                "Role": "CDO"
+            }
+        ]
+    }
+}
