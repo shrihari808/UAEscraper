@@ -2,3 +2,5 @@
 /.venv
 /cb-register-june-2025.pdf
 __pycache__/
+/analysisJsons/
+/vectorstorage/

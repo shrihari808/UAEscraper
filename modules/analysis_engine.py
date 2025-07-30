@@ -20,25 +20,31 @@ class AnalysisEngine:
         # Define a custom retriever that filters by company name
         def get_company_specific_retriever(info):
             company_name = info.get("company_name")
-            docs = self.vector_store.similarity_search(company_name, k=50) # Broad search
-            # Filter documents to only include the specified company
+            # Perform a similarity search first to get relevant documents
+            docs = self.vector_store.similarity_search(company_name, k=50) 
+            # Post-filter to ensure absolute relevance to the target company
             filtered_docs = [doc for doc in docs if doc.metadata.get('company') == company_name]
+            # Combine the content of the filtered documents
             return "\n---\n".join([doc.page_content for doc in filtered_docs])
 
+        # Updated prompt to be more specific for financial analysis
         template = """
-        You are a top-tier venture capital analyst and investigative journalist specializing in UAE Fintech. 
+        You are a top-tier venture capital analyst and investigative journalist specializing in UAE Fintech, leveraging a financial-domain-specific language model (FinBERT) for information retrieval.
         Your task is to synthesize the provided data for "{company_name}" to extract deep, actionable intelligence.
 
-        **CONTEXT (Retrieved from Knowledge Base):**
+        **CONTEXT (Retrieved from a finance-optimized Knowledge Base):**
         {context}
 
         **YOUR CORE OBJECTIVES (Synthesize all data to answer):**
-        1.  **Company Metadata:** Name, Sector, Location/Freezone, Stage.
-        2.  **Product & Platform Requirements:** What are they building? Key technologies? Development stage?
-        3.  **AI & Cloud Strategy:** AI implementation? Cloud usage?
-        4.  **Digital Transformation & Inclusion:** Digitization intent? Inclusion focus?
-        5.  **Partnerships & Events:** Collaborations mentioned anywhere? Events attended?
-        6.  **Decision Makers:** Key people and roles (CTO, CDO, Founder, etc.)?
+        1.  **Company Metadata:** Name, Sector, Location/Freezone, Stage (e.g., startup, growth, established), Founding Year.
+        2.  **Financial Offerings & Products:** What specific financial products do they offer (e.g., SME loans, real estate finance, asset financing, supply chain finance)? What is their core value proposition?
+        3.  **Strategic Focus & Signals:**
+            - **Digital Transformation:** What is their stage of digital adoption (e.g., legacy, transitioning, digital-native)? Mention any use of cloud, AI, or mobile-first strategies.
+            - **Key Focus Areas:** Are they targeting retail, corporate, or SME clients? Any specific industry focus?
+            - **Partnerships & M&A:** Are there any mentions of partnerships with other fintechs, banks, or tech companies? Any M&A activity?
+            - **Growth Signals:** Are they hiring for specific tech or expansion roles? Any mention of new product launches or market expansion?
+        4.  **Decision Makers:** Key people and roles (e.g., CEO, CTO, Chief Strategy Officer, Head of AI).
+        5.  **Competitive Landscape (Implied):** Based on their offerings and news, who might be their key competitors in the UAE market? (Provide 1-2 names if possible).
 
         **OUTPUT FORMAT:**
         Return a single, clean JSON object with the keys exactly as listed above. For "Company Metadata", ensure you include the "Name" of the company which is "{company_name}".

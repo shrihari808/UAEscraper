@@ -7,8 +7,8 @@ Utility functions for data handling, API clients, and the LangChain vector store
 import pandas as pd
 import os
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.embeddings import HuggingFaceEmbeddings
+# FIX: Updated import to resolve the FutureWarning and use the recommended package.
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 
 import config
@@ -61,26 +61,31 @@ def get_llm():
 def get_vector_store():
     """
     Initializes and returns a LangChain FAISS vector store.
-    It will load from disk if it exists, otherwise it will create it.
+    It will load from disk if it exists, otherwise it will create a new one.
     """
     print("🧠 Initializing LangChain vector store...")
-    # Using a local, open-source model for embeddings is cost-effective.
     embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
     
-    # Create the directory if it doesn't exist
-    directory = os.path.dirname(config.FAISS_INDEX_PATH)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-        print(f"   -> Created directory: {directory}")
+    # Define the path to the specific index file to check for existence
+    index_file_path = os.path.join(config.FAISS_INDEX_PATH, "index.faiss")
 
-    if os.path.exists(config.FAISS_INDEX_PATH):
-        vector_store = FAISS.load_local(config.FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
+    # Check if the actual FAISS index file exists
+    if os.path.exists(index_file_path):
+        vector_store = FAISS.load_local(
+            config.FAISS_INDEX_PATH, 
+            embeddings, 
+            allow_dangerous_deserialization=True
+        )
         print(f"✅ Knowledge base loaded from disk. Contains {vector_store.index.ntotal} vectors.")
     else:
-        # This case is for initialization; the index is created when documents are first added.
+        # If the index file doesn't exist, create the directory structure and a new, temporary store
         print("   -> No existing knowledge base found. A new one will be created upon adding documents.")
-        # We return an empty placeholder that will be populated by the scraper.
-        # A dummy text and embedding is needed to initialize the FAISS index.
+        os.makedirs(config.FAISS_INDEX_PATH, exist_ok=True)
+        
+        # A dummy text and embedding is needed to initialize the FAISS index in memory.
+        # This will be populated by the scraper and saved later.
         vector_store = FAISS.from_texts(["init"], embeddings)
+        # Remove the dummy 'init' document right away so the store is clean for new data
+        vector_store.delete([vector_store.index_to_docstore_id[0]])
 
     return vector_store

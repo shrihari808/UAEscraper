@@ -35,7 +35,8 @@ NO_OF_NEWS_ARTICLES_TO_SCRAPE = 2
 SAMPLE_SIZE = 5
 
 # --- Vectorization ---
-EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+# Updated to use FinBERT for more accurate financial text embeddings
+EMBEDDING_MODEL = 'ProsusAI/finbert'
 
 # --- LLM Models ---
 # Model for URL finding and analysis

@@ -41,9 +41,16 @@ def step_2_scrape_linkedin(df, vector_store):
     scraper.close()
 
     if all_documents:
-        vector_store.add_documents(all_documents)
-        vector_store.save_local(config.FAISS_INDEX_PATH)
-        print("\n✅ Step 2 Complete. LinkedIn data vectorized and saved.")
+        # FIX: Filter out documents with empty or whitespace-only content to prevent embedding errors.
+        valid_documents = [doc for doc in all_documents if doc.page_content and doc.page_content.strip()]
+        
+        if valid_documents:
+            print(f"  -> Found {len(valid_documents)} valid documents to add to the knowledge base.")
+            vector_store.add_documents(valid_documents)
+            vector_store.save_local(config.FAISS_INDEX_PATH)
+            print("\n✅ Step 2 Complete. LinkedIn data vectorized and saved.")
+        else:
+            print("\n- No valid documents with content found from LinkedIn to add to the knowledge base.")
 
 def step_3_scrape_news(df, vector_store):
     """Scrapes news articles and adds them to the vector store."""
@@ -59,9 +66,16 @@ def step_3_scrape_news(df, vector_store):
     scraper.close()
 
     if all_documents:
-        vector_store.add_documents(all_documents)
-        vector_store.save_local(config.FAISS_INDEX_PATH)
-        print("\n✅ Step 3 Complete. News data vectorized and saved.")
+        # FIX: Filter out documents with empty or whitespace-only content to prevent embedding errors.
+        valid_documents = [doc for doc in all_documents if doc.page_content and doc.page_content.strip()]
+        
+        if valid_documents:
+            print(f"  -> Found {len(valid_documents)} valid news articles to add to the knowledge base.")
+            vector_store.add_documents(valid_documents)
+            vector_store.save_local(config.FAISS_INDEX_PATH)
+            print("\n✅ Step 3 Complete. News data vectorized and saved.")
+        else:
+            print("\n- No valid news articles with content found to add to the knowledge base.")
 
 
 def step_4_analyze_company(company_name, llm, vector_store):
