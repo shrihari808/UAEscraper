@@ -15,6 +15,7 @@ from modules.url_finder import URLFinder
 from modules.linkedin_scraper import LinkedInScraper
 from modules.website_scraper import WebsiteScraper
 from modules.news_scraper import NewsScraper
+from modules.app_scraper import AppScraper # New import
 from modules.analysis_engine import AnalysisEngine
 
 def step_1_find_urls(df, client):
@@ -101,9 +102,31 @@ def step_4_scrape_news(df, vector_store):
         else:
             print("\n- No valid news articles with content found to add to the knowledge base.")
 
-def step_5_analyze_company(company_name, llm, vector_store):
+def step_5_scrape_apps(df, vector_store):
+    """Scrapes app stores and adds findings to the vector store."""
+    print("\n--- Step 5: Scraping App Stores (Google Play & Apple) ---")
+    scraper = AppScraper()
+    
+    all_documents = []
+    for _, row in df.iterrows():
+        company_name = row['Cleaned Name']
+        print(f"\nProcessing App Stores for: {company_name}")
+        documents = scraper.scrape_apps(company_name)
+        all_documents.extend(documents)
+    scraper.close()
+
+    if all_documents:
+        # App scraper returns pre-filtered, valid documents
+        print(f"  -> Found {len(all_documents)} valid app records to add to the knowledge base.")
+        vector_store.add_documents(all_documents)
+        vector_store.save_local(config.FAISS_INDEX_PATH)
+        print("\n✅ Step 5 Complete. App store data vectorized and saved.")
+    else:
+        print("\n- No app store data found to add to the knowledge base.")
+
+def step_6_analyze_company(company_name, llm, vector_store):
     """Analyzes a single company using the LangChain RAG chain."""
-    print(f"\n--- Step 5: Analyzing '{company_name}' ---")
+    print(f"\n--- Step 6: Analyzing '{company_name}' ---")
     engine = AnalysisEngine(llm=llm, vector_store=vector_store)
     
     analysis_result = engine.analyze(company_name)
@@ -127,7 +150,8 @@ def main():
     parser.add_argument('--scrape-linkedin', action='store_true', help="Run Step 2: Scrape LinkedIn profiles and vectorize.")
     parser.add_argument('--scrape-websites', action='store_true', help="Run Step 3: Scrape company websites and vectorize.")
     parser.add_argument('--scrape-news', action='store_true', help="Run Step 4: Scrape news articles and vectorize.")
-    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 5: Analyze a specific company using the existing knowledge base.")
+    parser.add_argument('--scrape-apps', action='store_true', help="Run Step 5: Scrape App Stores and vectorize.") # New argument
+    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 6: Analyze a specific company.")
     
     args = parser.parse_args()
 
@@ -142,13 +166,13 @@ def main():
         if initial_df is not None:
             step_1_find_urls(initial_df, openai_client)
 
-    if args.scrape_linkedin or args.scrape_websites or args.scrape_news:
+    # Logic for scraping steps
+    if args.scrape_linkedin or args.scrape_websites or args.scrape_news or args.scrape_apps:
         enriched_df = utils.load_enriched_data(config.OUTPUT_CSV_LINKEDIN)
         if enriched_df is None:
             print("Cannot run scraping. Please run with --find-urls first to generate the required input file.")
             return
 
-        # --- FIX: Logic now uses both SAMPLE_SIZE and RANDOM_STATE from config ---
         if config.SAMPLE_SIZE and len(enriched_df) > config.SAMPLE_SIZE:
             sample_df = enriched_df.sample(n=config.SAMPLE_SIZE, random_state=config.RANDOM_STATE)
         else:
@@ -160,7 +184,6 @@ def main():
         vector_store = utils.get_vector_store()
         
         if args.scrape_linkedin:
-            # --- FIX: Filter the dataframe to ONLY include rows with valid LinkedIn URLs for the LinkedIn scraper ---
             linkedin_df = sample_df.dropna(subset=['linkedin_url'])
             linkedin_df = linkedin_df[linkedin_df['linkedin_url'].str.contains('linkedin.com', na=False)]
             if not linkedin_df.empty:
@@ -169,7 +192,6 @@ def main():
                 print("\n- No valid LinkedIn URLs found in the sample to scrape.")
 
         if args.scrape_websites:
-            # --- FIX: Filter the dataframe to ONLY include rows with valid website URLs for the website scraper ---
             website_df = sample_df.dropna(subset=['website_url'])
             website_df = website_df[website_df['website_url'].str.startswith('http', na=False)]
             if not website_df.empty:
@@ -178,8 +200,10 @@ def main():
                 print("\n- No valid website URLs found in the sample to scrape.")
         
         if args.scrape_news:
-            # News scraper only needs the company name, so no filtering is required
             step_4_scrape_news(sample_df, vector_store)
+        
+        if args.scrape_apps: # New step execution
+            step_5_scrape_apps(sample_df, vector_store)
 
     if args.analyze:
         if not os.path.exists(config.FAISS_INDEX_PATH):
@@ -190,7 +214,7 @@ def main():
         if not llm: return
         
         vector_store = utils.get_vector_store()
-        step_5_analyze_company(args.analyze, llm, vector_store)
+        step_6_analyze_company(args.analyze, llm, vector_store)
 
     print("\n\n🎉 --- Pipeline Finished --- 🎉")
 

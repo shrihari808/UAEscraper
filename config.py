@@ -32,6 +32,8 @@ NO_OF_POSTS_TO_SCRAPE = 10
 NO_OF_NEWS_ARTICLES_TO_SCRAPE = 2
 # Number of website pages to scrape per company
 NO_OF_WEBSITE_PAGES_TO_SCRAPE = 5
+# Number of apps to check per store for each company
+NO_OF_APPS_TO_SCRAPE = 1 # Set to 1 to focus on the most relevant result
 # Number of companies to sample for processing in each run
 # Set to None to process all companies
 SAMPLE_SIZE = 5
