@@ -14,17 +14,25 @@ import config
 
 class LinkedInScraper:
     """
-    Scrapes data from a LinkedIn company's 'About' and 'Posts' pages,
-    returning a list of LangChain Documents.
+    Scrapes data from a LinkedIn company's 'About' and 'Posts' pages.
+    Can be initialized with a pre-existing driver or create its own.
     """
 
-    def __init__(self):
-        """Initializes the scraper."""
-        self.driver = self._setup_driver_with_cookies()
+    def __init__(self, driver=None):
+        """
+        Initializes the scraper.
+        If a driver is provided, it uses it. Otherwise, it creates a new one.
+        """
+        if driver:
+            self.driver = driver
+            self.owns_driver = False
+        else:
+            self.driver = self._setup_driver_with_cookies()
+            self.owns_driver = True
 
     def _setup_driver_with_cookies(self):
         """Initializes a browser and logs in using a cookie file."""
-        print("🚀 Initializing WebDriver and loading cookies for LinkedIn...")
+        print("  -> (LinkedInScraper) Creating new driver instance...")
         try:
             with open(config.COOKIES_FILE, "r") as f:
                 cookies = json.load(f)
@@ -32,14 +40,20 @@ class LinkedInScraper:
             print(f"\n❌ FATAL ERROR: {config.COOKIES_FILE} not found. Please run cookie_generator.py first.")
             return None
         
-        driver = uc.Chrome(use_subprocess=True)
+        options = uc.ChromeOptions()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        
+        driver = uc.Chrome(options=options, use_subprocess=True)
+        
         driver.get("https://www.linkedin.com/")
         for cookie in cookies:
             if 'expiry' in cookie:
                 cookie['expiry'] = int(cookie['expiry'])
             driver.add_cookie(cookie)
         
-        print("  -> Cookies loaded into browser.")
         driver.get("https://www.linkedin.com/feed/")
         try:
             WebDriverWait(driver, 15).until(lambda d: "Feed" in d.title or "Sign In" in d.title)
@@ -53,7 +67,7 @@ class LinkedInScraper:
             driver.quit()
             return None
             
-        print("✅ Successfully logged into LinkedIn.")
+        print("✅ (LinkedInScraper) New driver logged into LinkedIn.")
         return driver
 
     def _human_like_delay(self):
@@ -95,10 +109,9 @@ class LinkedInScraper:
         posts_url = company_url.rstrip('/') + '/posts/'
         self.driver.get(posts_url)
         try:
-            # Wait for the main post container to be present. If it's not, time out and skip.
             wait.until(EC.presence_of_element_located((By.CLASS_NAME, "scaffold-finite-scroll__content")))
             
-            for _ in range(2): # Scroll down to load more posts
+            for _ in range(2): 
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 self._human_like_delay()
             
@@ -108,16 +121,14 @@ class LinkedInScraper:
                 print(f"    -> No posts found on the page for {company_name}.")
                 return documents
 
-            # Click "see more" on all visible posts first to expand them
             for post in post_elements:
                 try:
                     more_button = post.find_element(By.CSS_SELECTOR, ".update-components-text__see-more")
                     self.driver.execute_script("arguments[0].click();", more_button)
                     time.sleep(0.5)
                 except NoSuchElementException:
-                    pass # No "see more" button, post is already fully visible
+                    pass 
             
-            # Now extract the full text from the expanded posts
             for post in post_elements:
                 documents.append(Document(
                     page_content=post.text,
@@ -133,7 +144,7 @@ class LinkedInScraper:
         return documents
 
     def close(self):
-        """Closes the Selenium driver."""
-        if self.driver:
+        """Closes the Selenium driver only if this instance created it."""
+        if self.driver and self.owns_driver:
             self.driver.quit()
-            print("\nBrowser closed.")
+            print("\nBrowser instance closed.")

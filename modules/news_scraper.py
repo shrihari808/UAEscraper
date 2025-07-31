@@ -12,14 +12,37 @@ import config
 class NewsScraper:
     """Searches for and scrapes news articles, returning LangChain Documents."""
 
-    def __init__(self):
-        self.driver = uc.Chrome(use_subprocess=True)
+    def __init__(self, driver=None):
+        """
+        Initializes the scraper.
+        If a driver is provided, it uses it. Otherwise, it creates a new one.
+        """
+        if driver:
+            self.driver = driver
+            self.owns_driver = False
+        else:
+            self.driver = self._setup_driver()
+            self.owns_driver = True
+
+    def _setup_driver(self):
+        """Initializes a new browser instance."""
+        print("  -> (NewsScraper) Creating new driver instance...")
+        options = uc.ChromeOptions()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        return uc.Chrome(options=options, use_subprocess=True)
+
 
     def _search_brave(self, query):
         """Performs a targeted web search using the Brave Search API."""
         if not config.BRAVE_API_KEY:
             print("⚠️  Brave API key is missing. Skipping real search.")
             return []
+            
+        time.sleep(config.BRAVE_API_RATE_LIMIT)
+
         headers = {"Accept": "application/json", "X-Subscription-Token": config.BRAVE_API_KEY}
         params = {"q": query, "country": "US", "search_lang": "en"}
         try:
@@ -42,14 +65,14 @@ class NewsScraper:
         documents = []
         
         if not search_results:
-            print("    -> No news found on credible sites.")
+            print(f"    -> No news found on credible sites for '{company_name}'.")
             return []
             
         for result in search_results[:config.NO_OF_NEWS_ARTICLES_TO_SCRAPE]:
             url = result.get("url")
             if url:
                 try:
-                    print(f"    -> Scraping news article: {url}")
+                    print(f"    -> Scraping news article for '{company_name}': {url}")
                     self.driver.get(url)
                     time.sleep(random.uniform(2, 4))
                     article_text = self.driver.find_element(By.TAG_NAME, 'body').text
@@ -63,7 +86,7 @@ class NewsScraper:
         return documents
 
     def close(self):
-        """Closes the Selenium driver."""
-        if self.driver:
+        """Closes the Selenium driver only if this instance created it."""
+        if self.driver and self.owns_driver:
             self.driver.quit()
-            print("\nBrowser for news scraping closed.")
+            print("\nBrowser instance closed.")

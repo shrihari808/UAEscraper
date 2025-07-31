@@ -3,6 +3,8 @@
 import requests
 from google_play_scraper import search as search_play_store, app as app_play_store
 from langchain.docstore.document import Document
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import config
 
 class AppScraper:
@@ -59,17 +61,9 @@ class AppScraper:
             print(f"    ⚠️ An error occurred during Apple App Store API call: {e}")
             return []
 
-    def scrape_apps(self, company_name):
-        """
-        Searches both the Google Play Store and Apple App Store for a company's app,
-        scrapes the top result, and returns LangChain Documents.
-        """
-        print(f"  -> Searching for mobile apps for '{company_name}' in the UAE region...")
-        documents = []
-
-        # --- Scrape Google Play Store ---
+    def _scrape_google_play(self, company_name):
+        """Scrapes the Google Play Store for a company's app."""
         try:
-            # FIX: Removed the unsupported 'gl' argument. 'country' is the correct parameter.
             search_results = search_play_store(
                 query=company_name,
                 n_hits=config.NO_OF_APPS_TO_SCRAPE,
@@ -82,20 +76,20 @@ class AppScraper:
                 details = app_play_store(app_id, lang='en', country='ae')
                 
                 formatted_text = self._format_app_details("Google Play Store", details)
-                documents.append(Document(
+                return [Document(
                     page_content=formatted_text,
                     metadata={"company": company_name, "source": f"google-play-store:{app_id}", "type": "mobile_app"}
-                ))
-                print(f"    ✅ Scraped Google Play Store for '{details.get('title')}'.")
+                )]
             else:
-                # FIX: Handle case where no results are returned, as no exception is thrown.
                 print(f"    -> No Google Play app found for '{company_name}'.")
 
         except Exception as e:
-            # FIX: Broadened exception handling as 'NotFound' is not a valid exception class.
             print(f"    ⚠️ An error occurred during Google Play scraping: {e}")
+        
+        return []
 
-        # --- Scrape Apple App Store ---
+    def _scrape_apple_store(self, company_name):
+        """Scrapes the Apple App Store for a company's app."""
         try:
             search_results = self._search_apple_app_store(
                 term=company_name,
@@ -110,16 +104,39 @@ class AppScraper:
                 print(f"    -> Found potential Apple App Store app: {app_name} ({app_id})")
 
                 formatted_text = self._format_app_details("Apple App Store", app_details)
-                documents.append(Document(
+                return [Document(
                     page_content=formatted_text,
                     metadata={"company": company_name, "source": f"apple-app-store:{app_id}", "type": "mobile_app"}
-                ))
-                print(f"    ✅ Scraped Apple App Store for '{app_name}'.")
+                )]
 
         except Exception as e:
             print(f"    ⚠️ An unexpected error occurred during Apple App Store processing: {e}")
+        
+        return []
 
-        if not documents and len(documents) == 0: # Check if still no documents after both stores
+    def scrape_apps(self, company_name):
+        """
+        Searches both the Google Play Store and Apple App Store concurrently for a company's app,
+        and returns LangChain Documents.
+        """
+        print(f"  -> Concurrently searching app stores for '{company_name}'...")
+        documents = []
+        
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both scraping tasks to run in parallel
+            future_google = executor.submit(self._scrape_google_play, company_name)
+            future_apple = executor.submit(self._scrape_apple_store, company_name)
+
+            # Collect results as they complete
+            for future in as_completed([future_google, future_apple]):
+                try:
+                    result = future.result()
+                    if result:
+                        documents.extend(result)
+                except Exception as e:
+                    print(f"    ⚠️ An error occurred in an app scraping thread: {e}")
+        
+        if not documents:
             print(f"  -> No mobile apps found for '{company_name}' in either store.")
             
         return documents

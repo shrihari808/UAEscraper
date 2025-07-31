@@ -20,27 +20,47 @@ class AnalysisEngine:
         """Builds the LangChain Expression Language (LCEL) chain."""
         def get_company_specific_retriever(info):
             """
-            Retrieves documents specific to the company and formats them
-            to include their source URL in the context provided to the LLM.
+            Performs multiple, strictly filtered searches to retrieve a comprehensive
+            and accurate set of documents for a specific company.
             """
             company_name = info.get("company_name")
-            # Retrieve a broad set of documents that might be relevant
-            docs = self.vector_store.similarity_search(company_name, k=50)
-            # Filter down to documents that are explicitly tagged with the company's name
-            filtered_docs = [doc for doc in docs if doc.metadata.get('company') == company_name]
+            
+            # --- Strict Multi-retrieval Strategy ---
+            # This strategy ensures that we only retrieve documents matching the company name
+            # by applying a metadata filter directly in the vector search.
 
-            # Format the context to explicitly include the source of each piece of information
+            # 1. Get dedicated App information strictly for this company
+            app_docs = self.vector_store.similarity_search(
+                company_name, k=2, filter={"company": company_name, "type": "mobile_app"}
+            )
+
+            # 2. Get dedicated LinkedIn information strictly for this company
+            linkedin_docs = self.vector_store.similarity_search(
+                company_name, k=3, filter={"company": company_name, "type": "company_about"}
+            )
+
+            # 3. Get a diverse set of general information strictly for this company
+            general_docs = self.vector_store.max_marginal_relevance_search(
+                company_name, k=8, fetch_k=50, filter={"company": company_name}
+            )
+
+            # Combine and deduplicate the strictly filtered documents
+            combined_docs = app_docs + linkedin_docs + general_docs
+            unique_docs = list({doc.metadata['source']: doc for doc in combined_docs}.values())
+
+
+            # Format the context, with content slicing
             context_with_sources = []
-            for doc in filtered_docs:
+            MAX_CHARS_PER_DOC = 5000 
+            for doc in unique_docs:
                 source = doc.metadata.get('source', 'N/A')
-                content = doc.page_content
+                content = doc.page_content[:MAX_CHARS_PER_DOC]
                 context_with_sources.append(f"Source: {source}\nContent:\n{content}")
 
             return "\n---\n".join(context_with_sources)
 
 
-        # --- UPDATED PROMPT ---
-        # This new prompt template instructs the LLM to perform the deeper analysis required.
+        # --- PROMPT ---
         template = """
         You are a top-tier venture capital analyst and investigative journalist specializing in UAE Fintech.
         Your task is to synthesize the provided data for "{company_name}" to extract deep, actionable intelligence.
@@ -85,7 +105,6 @@ class AnalysisEngine:
 
         prompt = ChatPromptTemplate.from_template(template)
 
-        # This custom parser is designed to be resilient to potential formatting issues from the LLM.
         class CustomJsonOutputParser(JsonOutputParser):
             def parse(self, text: str):
                 """
@@ -93,38 +112,30 @@ class AnalysisEngine:
                 embedded in markdown code blocks or has other surrounding text.
                 """
                 try:
-                    # Method 1: Clean the text by removing markdown code blocks.
                     cleaned_text = text.strip()
                     
-                    # Regex to find content within ```json ... ``` or ``` ... ```
                     code_block_pattern = r'```(?:json)?\s*(.*?)\s*```'
                     match = re.search(code_block_pattern, cleaned_text, re.DOTALL)
                     
-                    # If a markdown block is found, use its content.
                     if match:
                         cleaned_text = match.group(1).strip()
                     
-                    # Method 2: Find the boundaries of the JSON object.
                     json_start = cleaned_text.find('{')
                     json_end = cleaned_text.rfind('}') + 1
 
                     if json_start == -1 or json_end == 0:
                         raise json.JSONDecodeError("No JSON object markers found in the cleaned output.", cleaned_text, 0)
 
-                    # Slice the string to get the JSON part.
                     json_str = cleaned_text[json_start:json_end]
                     
-                    # Parse and return the JSON object.
                     return json.loads(json_str)
 
                 except json.JSONDecodeError as e:
-                    # If parsing fails, return an error structure with the raw text for debugging.
                     print(f"Error decoding JSON from LLM output. Raw text: '{text}'. Error: {e}")
                     return {"error": "Failed to parse LLM JSON output", "raw_output": text}
 
         output_parser = CustomJsonOutputParser()
 
-        # The final chain definition, which pipes the context and company name through the prompt, to the LLM, and finally to the output parser.
         chain = (
             {"context": get_company_specific_retriever, "company_name": RunnablePassthrough()}
             | prompt
@@ -137,6 +148,7 @@ class AnalysisEngine:
         """Invokes the RAG chain to analyze a company."""
         print(f"🤖 Performing RAG-based analysis for '{company_name}' using LangChain...")
         try:
+            # The invoke method now needs a dictionary for the RunnablePassthrough
             result = self.chain.invoke({"company_name": company_name})
             print("  -> ✅ Detailed analysis complete.")
             return result

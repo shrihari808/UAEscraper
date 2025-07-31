@@ -20,6 +20,10 @@ class URLFinder:
         if not config.BRAVE_API_KEY:
             print("⚠️  Brave API key is missing. Skipping real search.")
             return []
+        
+        # Add rate limiting delay
+        time.sleep(config.BRAVE_API_RATE_LIMIT)
+        
         headers = {"Accept": "application/json", "X-Subscription-Token": config.BRAVE_API_KEY}
         params = {"q": query, "country": "US", "search_lang": "en", "count": 15} 
         try:
