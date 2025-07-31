@@ -55,27 +55,63 @@ def get_llm():
     return ChatOpenAI(model=config.LLM_MODEL, temperature=0, api_key=config.OPENAI_API_KEY)
 
 # --- Vector Store Management (LangChain Implementation) ---
-def get_vector_store():
+def get_vector_store(index_name: str):
     """
-    Initializes and returns a LangChain FAISS vector store.
+    Initializes and returns a specific LangChain FAISS vector store by name.
     It will load from disk if it exists, otherwise it will create a new one.
     """
-    print("🧠 Initializing LangChain vector store...")
+    if index_name not in config.FAISS_INDEX_PATHS:
+        print(f"❌ Error: Index name '{index_name}' not found in config.")
+        return None
+
+    index_path = config.FAISS_INDEX_PATHS[index_name]
+    print(f"🧠 Initializing vector store '{index_name}' from path: {index_path}")
+    
     embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
     
-    index_file_path = os.path.join(config.FAISS_INDEX_PATH, "index.faiss")
+    index_file_path = os.path.join(index_path, "index.faiss")
 
     if os.path.exists(index_file_path):
         vector_store = FAISS.load_local(
-            config.FAISS_INDEX_PATH, 
+            index_path, 
             embeddings, 
             allow_dangerous_deserialization=True
         )
-        print(f"✅ Knowledge base loaded from disk. Contains {vector_store.index.ntotal} vectors.")
+        print(f"✅ Knowledge base for '{index_name}' loaded from disk. Contains {vector_store.index.ntotal} vectors.")
     else:
-        print("   -> No existing knowledge base found. A new one will be created upon adding documents.")
-        os.makedirs(config.FAISS_INDEX_PATH, exist_ok=True)
+        print(f"   -> No existing knowledge base found for '{index_name}'. A new one will be created.")
+        os.makedirs(index_path, exist_ok=True)
+        # Create an empty store to be populated later
         vector_store = FAISS.from_texts(["init"], embeddings)
         vector_store.delete([vector_store.index_to_docstore_id[0]])
 
     return vector_store
+
+def load_all_vector_stores():
+    """
+    Loads all existing FAISS vector stores defined in the config.
+    Used by the analysis engine to query across all data sources.
+    """
+    print("🧠 Loading all available vector stores for analysis...")
+    stores = {}
+    embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
+
+    for index_name, index_path in config.FAISS_INDEX_PATHS.items():
+        index_file_path = os.path.join(index_path, "index.faiss")
+        if os.path.exists(index_file_path):
+            try:
+                stores[index_name] = FAISS.load_local(
+                    index_path,
+                    embeddings,
+                    allow_dangerous_deserialization=True
+                )
+                print(f"  -> Successfully loaded index '{index_name}'")
+            except Exception as e:
+                print(f"  -> ⚠️  Could not load index '{index_name}': {e}")
+        else:
+            print(f"  -> ℹ️  Index for '{index_name}' not found, skipping.")
+    
+    if not stores:
+        print("❌ No vector stores were loaded. Analysis will not have any context.")
+    
+    return stores

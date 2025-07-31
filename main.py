@@ -105,9 +105,7 @@ def run_scraping_in_parallel(worker_function, tasks, max_workers):
         for future in as_completed(futures):
             try:
                 result = future.result()
-                # FIX: Ensure that only non-None results are processed
                 if result:
-                    # If the result is a list, extend. If it's a single item, append.
                     if isinstance(result, list):
                         all_documents.extend(result)
                     else:
@@ -128,55 +126,67 @@ async def run_async_scraping_in_parallel(worker_function, tasks):
                 all_documents.append(result)
     return all_documents
 
-def step_2_scrape_linkedin(df, vector_store, driver_pool):
-    """Scrapes LinkedIn company data in parallel and adds it to the vector store."""
+def step_2_scrape_linkedin(df, driver_pool):
+    """Scrapes LinkedIn company data in parallel and adds it to the 'linkedin' vector store."""
     print("\n--- Step 2: Scraping LinkedIn Company Profiles (Parallel) ---")
+    index_name = 'linkedin'
+    vector_store = utils.get_vector_store(index_name)
     tasks = [(row['Cleaned Name'], row['linkedin_url'], driver_pool) for _, row in df.iterrows()]
     all_documents = run_scraping_in_parallel(scrape_linkedin_for_company, tasks, config.SELENIUM_MAX_WORKERS)
     
     if all_documents:
         vector_store.add_documents(all_documents)
-        print("\n✅ Step 2 Complete. LinkedIn data vectorized.")
+        vector_store.save_local(config.FAISS_INDEX_PATHS[index_name])
+        print(f"\n✅ Step 2 Complete. LinkedIn data vectorized and saved to '{index_name}' index.")
 
-def step_3_scrape_websites(df, vector_store):
-    """Scrapes company websites asynchronously and adds them to the vector store."""
+def step_3_scrape_websites(df):
+    """Scrapes company websites asynchronously and adds them to the 'websites' vector store."""
     print("\n--- Step 3: Scraping Company Websites (Async) ---")
+    index_name = 'websites'
+    vector_store = utils.get_vector_store(index_name)
     tasks = [(row['Cleaned Name'], row.get('website_url')) for _, row in df.iterrows()]
     all_documents = asyncio.run(run_async_scraping_in_parallel(scrape_website_for_company_async, tasks))
 
     if all_documents:
         vector_store.add_documents(all_documents)
-        print("\n✅ Step 3 Complete. Website data vectorized.")
+        vector_store.save_local(config.FAISS_INDEX_PATHS[index_name])
+        print(f"\n✅ Step 3 Complete. Website data vectorized and saved to '{index_name}' index.")
 
-def step_4_scrape_news(df, vector_store, driver_pool):
-    """Scrapes news articles in parallel and adds them to the vector store."""
+def step_4_scrape_news(df, driver_pool):
+    """Scrapes news articles in parallel and adds them to the 'news' vector store."""
     print("\n--- Step 4: Scraping News Articles (Parallel) ---")
+    index_name = 'news'
+    vector_store = utils.get_vector_store(index_name)
     tasks = [(row['Cleaned Name'], driver_pool) for _, row in df.iterrows()]
     all_documents = run_scraping_in_parallel(scrape_news_for_company, tasks, config.SELENIUM_MAX_WORKERS)
     
     if all_documents:
         vector_store.add_documents(all_documents)
-        print("\n✅ Step 4 Complete. News data vectorized.")
+        vector_store.save_local(config.FAISS_INDEX_PATHS[index_name])
+        print(f"\n✅ Step 4 Complete. News data vectorized and saved to '{index_name}' index.")
 
-def step_5_scrape_apps(df, vector_store):
-    """Scrapes app stores in parallel and adds findings to the vector store."""
+def step_5_scrape_apps(df):
+    """Scrapes app stores in parallel and adds findings to the 'apps' vector store."""
     print("\n--- Step 5: Scraping App Stores (Parallel) ---")
+    index_name = 'apps'
+    vector_store = utils.get_vector_store(index_name)
     tasks = [row['Cleaned Name'] for _, row in df.iterrows()]
     all_documents = run_scraping_in_parallel(scrape_apps_for_company, tasks, config.NETWORK_MAX_WORKERS)
 
     if all_documents:
         vector_store.add_documents(all_documents)
-        print("\n✅ Step 5 Complete. App store data vectorized.")
+        vector_store.save_local(config.FAISS_INDEX_PATHS[index_name])
+        print(f"\n✅ Step 5 Complete. App store data vectorized and saved to '{index_name}' index.")
 
-def step_7_scrape_deep_web(df, vector_store, driver_pool):
+def step_7_scrape_deep_web(df, driver_pool):
     """
-    Performs deep web scraping using a two-stage process to respect API rate limits
-    while maximizing scraping concurrency.
+    Performs deep web scraping and adds findings to the 'deep_search' vector store.
     """
     print("\n--- Step 7: Deep Web Intelligence Scraping (Pipelined) ---")
+    index_name = 'deep_search'
+    vector_store = utils.get_vector_store(index_name)
     scraper = DeepSearchScraper()
     
-    # --- Stage 1: Sequentially fetch all search results to respect rate limits ---
     all_urls_to_scrape = []
     scraped_urls = set()
 
@@ -205,20 +215,26 @@ def step_7_scrape_deep_web(df, vector_store, driver_pool):
         print("\n- No unique URLs found from deep search to scrape.")
         return
 
-    # --- Stage 2: Scrape all collected URLs in parallel ---
     print(f"\n    -> Stage 2: Concurrently scraping {len(all_urls_to_scrape)} unique URLs...")
     all_documents = run_scraping_in_parallel(scraper.scrape_single_url, all_urls_to_scrape, config.SELENIUM_MAX_WORKERS)
     
     if all_documents:
         print(f"\n  -> Deep web search complete. Found {len(all_documents)} documents.")
         vector_store.add_documents(all_documents)
-        print("\n✅ Step 7 Complete. Deep web data vectorized.")
+        vector_store.save_local(config.FAISS_INDEX_PATHS[index_name])
+        print(f"\n✅ Step 7 Complete. Deep web data vectorized and saved to '{index_name}' index.")
 
 
-def step_6_analyze_company(company_name, llm, vector_store):
-    """Analyzes a single company using the LangChain RAG chain."""
+def step_6_analyze_company(company_name, llm):
+    """Analyzes a single company by loading all vector stores and using the RAG chain."""
     print(f"\n--- Step 6: Analyzing '{company_name}' ---")
-    engine = AnalysisEngine(llm=llm, vector_store=vector_store)
+    
+    vector_stores = utils.load_all_vector_stores()
+    if not vector_stores:
+        print("❌ Analysis cannot proceed. No vector stores found. Please run scraping steps first.")
+        return
+
+    engine = AnalysisEngine(llm=llm, vector_stores=vector_stores)
     
     analysis_result = engine.analyze(company_name)
     if analysis_result and "error" not in analysis_result:
@@ -247,7 +263,7 @@ def main():
     parser.add_argument('--scrape-apps', action='store_true', help="Run Step 5: Scrape App Stores and vectorize.")
     parser.add_argument('--scrape-deep-web', action='store_true', help="Run Step 7: Scrape deep web for partnerships, forums, etc.")
     parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 6: Analyze a specific company.")
-    parser.add_argument('--all-scrape', action='store_true', help="Run all scraping steps (2, 3, 4, 5, 7) in parallel.")
+    parser.add_argument('--all-scrape', action='store_true', help="Run all scraping steps (2, 3, 4, 5, 7).")
     
     args = parser.parse_args()
 
@@ -270,7 +286,7 @@ def main():
 
     # --- Scraping Block ---
     selenium_steps = args.scrape_linkedin or args.scrape_news or args.scrape_deep_web or args.all_scrape
-    other_scraping_steps = args.scrape_websites or args.scrape_apps
+    other_scraping_steps = args.scrape_websites or args.scrape_apps or args.all_scrape
     
     if selenium_steps or other_scraping_steps:
         enriched_df = None
@@ -291,7 +307,6 @@ def main():
         print(f"\nWill now process {len(sample_df)} companies for scraping:")
         for name in sample_df['Cleaned Name']: print(f"  - {name}")
 
-        vector_store = utils.get_vector_store()
         driver_pool = None
         
         try:
@@ -299,39 +314,32 @@ def main():
                 driver_pool = create_driver_pool(config.SELENIUM_MAX_WORKERS)
 
             if args.scrape_linkedin or args.all_scrape:
-                step_2_scrape_linkedin(sample_df, vector_store, driver_pool)
+                step_2_scrape_linkedin(sample_df, driver_pool)
 
             if args.scrape_websites or args.all_scrape:
-                step_3_scrape_websites(sample_df, vector_store)
+                step_3_scrape_websites(sample_df)
             
             if args.scrape_news or args.all_scrape:
-                step_4_scrape_news(sample_df, vector_store, driver_pool)
+                step_4_scrape_news(sample_df, driver_pool)
             
             if args.scrape_apps or args.all_scrape:
-                step_5_scrape_apps(sample_df, vector_store)
+                step_5_scrape_apps(sample_df)
             
             if args.scrape_deep_web or args.all_scrape:
-                step_7_scrape_deep_web(sample_df, vector_store, driver_pool)
+                step_7_scrape_deep_web(sample_df, driver_pool)
             
-            print("\n💾 Saving final knowledge base to disk...")
-            vector_store.save_local(config.FAISS_INDEX_PATH)
-            print("✅ Knowledge base saved.")
+            print("\n✅ All scraping tasks complete. Individual knowledge bases saved.")
 
         finally:
             if driver_pool:
                 shutdown_driver_pool(driver_pool)
 
-
+    # --- Analysis Block ---
     if args.analyze:
-        if not os.path.exists(config.FAISS_INDEX_PATH):
-             print("Knowledge base not found. Please run a scrape command first.")
-             return
-        
         llm = utils.get_llm()
         if not llm: return
         
-        vector_store = utils.get_vector_store()
-        step_6_analyze_company(args.analyze, llm, vector_store)
+        step_6_analyze_company(args.analyze, llm)
 
     print("\n\n🎉 --- Pipeline Finished --- 🎉")
 

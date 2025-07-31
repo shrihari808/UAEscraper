@@ -27,8 +27,18 @@ COOKIES_FILE = 'cookies.json'
 
 # Output/processed files
 OUTPUT_CSV_LINKEDIN = 'institutions_linkedin.csv'
-FAISS_INDEX_PATH = "vectorstorage/linkedin_data.index"
 ANALYSIS_OUTPUT_DIR = "analysisJsons"
+
+# --- Vector Store Index Paths ---
+# Each scraper will have its own dedicated FAISS index directory.
+FAISS_INDEX_PATHS = {
+    "linkedin": "vectorstorage/linkedin_index",
+    "websites": "vectorstorage/websites_index",
+    "news": "vectorstorage/news_index",
+    "apps": "vectorstorage/apps_index",
+    "deep_search": "vectorstorage/deep_search_index",
+}
+
 
 # --- Scraping Parameters ---
 NO_OF_POSTS_TO_SCRAPE = 10

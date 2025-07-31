@@ -9,49 +9,53 @@ import re
 import config
 
 class AnalysisEngine:
-    """Analyzes company data using a LangChain RAG chain."""
+    """Analyzes company data by querying multiple vector stores using a LangChain RAG chain."""
 
-    def __init__(self, llm, vector_store):
+    def __init__(self, llm, vector_stores):
+        """
+        Initializes the engine.
+        
+        Args:
+            llm: The language model to use for analysis.
+            vector_stores (dict): A dictionary where keys are index names (e.g., 'linkedin')
+                                  and values are the loaded FAISS vector store objects.
+        """
         self.llm = llm
-        self.vector_store = vector_store
+        self.vector_stores = vector_stores
         self.chain = self._create_rag_chain()
 
     def _create_rag_chain(self):
         """Builds the LangChain Expression Language (LCEL) chain."""
-        def get_company_specific_retriever(info):
+        
+        def get_docs_from_all_stores(info):
             """
-            Performs multiple, strictly filtered searches to retrieve a comprehensive
+            Performs searches across all available vector stores to retrieve a comprehensive
             and accurate set of documents for a specific company.
             """
             company_name = info.get("company_name")
+            print(f"  -> Retrieving documents for '{company_name}' from all vector stores...")
             
-            # --- Strict Multi-retrieval Strategy ---
-            # This strategy ensures that we only retrieve documents matching the company name
-            # by applying a metadata filter directly in the vector search.
+            all_docs = []
+            # Iterate through each loaded vector store
+            for store_name, store in self.vector_stores.items():
+                if store:
+                    # Perform a search on the current store, filtering by company name
+                    # to ensure relevance. Using a generous k to get diverse results.
+                    retrieved_docs = store.similarity_search(
+                        company_name, 
+                        k=10, 
+                        filter={"company": company_name}
+                    )
+                    all_docs.extend(retrieved_docs)
+                    print(f"    -> Found {len(retrieved_docs)} documents in '{store_name}' index.")
 
-            # 1. Get dedicated App information strictly for this company
-            app_docs = self.vector_store.similarity_search(
-                company_name, k=2, filter={"company": company_name, "type": "mobile_app"}
-            )
+            # Deduplicate the combined documents based on the source URL to avoid redundancy
+            unique_docs = list({doc.metadata['source']: doc for doc in all_docs}.values())
+            print(f"  -> Total unique documents after deduplication: {len(unique_docs)}")
 
-            # 2. Get dedicated LinkedIn information strictly for this company
-            linkedin_docs = self.vector_store.similarity_search(
-                company_name, k=3, filter={"company": company_name, "type": "company_about"}
-            )
-
-            # 3. Get a diverse set of general information strictly for this company
-            general_docs = self.vector_store.max_marginal_relevance_search(
-                company_name, k=8, fetch_k=50, filter={"company": company_name}
-            )
-
-            # Combine and deduplicate the strictly filtered documents
-            combined_docs = app_docs + linkedin_docs + general_docs
-            unique_docs = list({doc.metadata['source']: doc for doc in combined_docs}.values())
-
-
-            # Format the context, with content slicing
+            # Format the context for the LLM, slicing content to manage token count
             context_with_sources = []
-            MAX_CHARS_PER_DOC = 5000 
+            MAX_CHARS_PER_DOC = 4000 
             for doc in unique_docs:
                 source = doc.metadata.get('source', 'N/A')
                 content = doc.page_content[:MAX_CHARS_PER_DOC]
@@ -66,7 +70,7 @@ class AnalysisEngine:
         Your task is to synthesize the provided data for "{company_name}" to extract deep, actionable intelligence.
         You MUST cite the source for every piece of information you extract where specified in the output format.
 
-        **CONTEXT (Retrieved from a finance-optimized Knowledge Base):**
+        **CONTEXT (Retrieved from multiple specialized Knowledge Bases):**
         Each block of information is preceded by its source URL.
         {context}
 
@@ -137,7 +141,7 @@ class AnalysisEngine:
         output_parser = CustomJsonOutputParser()
 
         chain = (
-            {"context": get_company_specific_retriever, "company_name": RunnablePassthrough()}
+            {"context": get_docs_from_all_stores, "company_name": RunnablePassthrough()}
             | prompt
             | self.llm
             | output_parser
