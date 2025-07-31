@@ -8,6 +8,8 @@ Use command-line arguments to control which steps are executed.
 import json
 import argparse
 import os
+import pandas as pd # Import pandas
+import io # Import for in-memory file handling
 
 import config
 import utils
@@ -15,8 +17,11 @@ from modules.url_finder import URLFinder
 from modules.linkedin_scraper import LinkedInScraper
 from modules.website_scraper import WebsiteScraper
 from modules.news_scraper import NewsScraper
-from modules.app_scraper import AppScraper # New import
+from modules.app_scraper import AppScraper
 from modules.analysis_engine import AnalysisEngine
+# New import for the deep search scraper
+from modules.deep_search_scraper import DeepSearchScraper
+
 
 def step_1_find_urls(df, client):
     """Finds and verifies LinkedIn and website URLs for companies."""
@@ -27,8 +32,8 @@ def step_1_find_urls(df, client):
     print(f"\n✅ Step 1 Complete. Enriched data saved to '{config.OUTPUT_CSV_LINKEDIN}'")
 
 def step_2_scrape_linkedin(df, vector_store):
-    """Scrapes LinkedIn data and adds it to the vector store."""
-    print("\n--- Step 2: Scraping LinkedIn Profiles ---")
+    """Scrapes LinkedIn company data and adds it to the vector store."""
+    print("\n--- Step 2: Scraping LinkedIn Company Profiles ---")
     scraper = LinkedInScraper()
     if not scraper.driver:
         return
@@ -116,7 +121,6 @@ def step_5_scrape_apps(df, vector_store):
     scraper.close()
 
     if all_documents:
-        # App scraper returns pre-filtered, valid documents
         print(f"  -> Found {len(all_documents)} valid app records to add to the knowledge base.")
         vector_store.add_documents(all_documents)
         vector_store.save_local(config.FAISS_INDEX_PATH)
@@ -143,14 +147,41 @@ def step_6_analyze_company(company_name, llm, vector_store):
         print("\n--- Generated Intelligence ---")
         print(json.dumps(analysis_result, indent=4))
 
+# New function for the new scraping step
+def step_7_scrape_deep_web(df, vector_store):
+    """Performs deep web scraping for high-value intelligence."""
+    print("\n--- Step 7: Deep Web Intelligence Scraping ---")
+    scraper = DeepSearchScraper()
+    
+    all_documents = []
+    for _, row in df.iterrows():
+        company_name = row['Cleaned Name']
+        print(f"\nProcessing Deep Web for: {company_name}")
+        documents = scraper.scrape_deep_web(company_name)
+        all_documents.extend(documents)
+    scraper.close()
+
+    if all_documents:
+        valid_documents = [doc for doc in all_documents if doc.page_content and doc.page_content.strip()]
+        
+        if valid_documents:
+            print(f"  -> Found {len(valid_documents)} valid deep web documents to add to the knowledge base.")
+            vector_store.add_documents(valid_documents)
+            vector_store.save_local(config.FAISS_INDEX_PATH)
+            print("\n✅ Step 7 Complete. Deep web data vectorized and saved.")
+        else:
+            print("\n- No valid documents with content found from the deep web to add to the knowledge base.")
+
 def main():
     """Main function to parse arguments and run the selected pipeline steps."""
     parser = argparse.ArgumentParser(description="Fintech Founder Finder Pipeline")
     parser.add_argument('--find-urls', action='store_true', help="Run Step 1: Find LinkedIn and website URLs.")
-    parser.add_argument('--scrape-linkedin', action='store_true', help="Run Step 2: Scrape LinkedIn profiles and vectorize.")
+    parser.add_argument('--scrape-linkedin', action='store_true', help="Run Step 2: Scrape LinkedIn company pages.")
     parser.add_argument('--scrape-websites', action='store_true', help="Run Step 3: Scrape company websites and vectorize.")
     parser.add_argument('--scrape-news', action='store_true', help="Run Step 4: Scrape news articles and vectorize.")
-    parser.add_argument('--scrape-apps', action='store_true', help="Run Step 5: Scrape App Stores and vectorize.") # New argument
+    parser.add_argument('--scrape-apps', action='store_true', help="Run Step 5: Scrape App Stores and vectorize.")
+    # New command-line argument
+    parser.add_argument('--scrape-deep-web', action='store_true', help="Run Step 7: Scrape deep web for partnerships, forums, etc.")
     parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 6: Analyze a specific company.")
     
     args = parser.parse_args()
@@ -159,26 +190,51 @@ def main():
         parser.print_help()
         return
 
+    # --- START: TEMPORARY DEBUGGING BLOCK ---
+    # To test with specific companies, uncomment the following list.
+    # This will override the CSV loading for the --find-urls step.
+    # To return to normal functionality, comment out the `DEBUG_COMPANIES` list.
+    DEBUG_COMPANIES = ["Tabby", "Tamara"] 
+    # --- END: TEMPORARY DEBUGGING BLOCK ---
+
+
+    openai_client = None
     if args.find_urls:
         openai_client = utils.get_openai_client()
         if not openai_client: return
-        initial_df = utils.load_and_clean_companies(config.INPUT_CSV_ORIGINAL)
+        
+        initial_df = None
+        # --- DEBUG LOGIC ---
+        if 'DEBUG_COMPANIES' in locals() and DEBUG_COMPANIES:
+            print(f"--- ⚠️  RUNNING IN DEBUG MODE FOR: {', '.join(DEBUG_COMPANIES)} ---")
+            debug_data = {'Institution Name': DEBUG_COMPANIES}
+            # Create an in-memory CSV string from the debug data
+            debug_csv_string = pd.DataFrame(debug_data).to_csv(index=False)
+            # Use io.StringIO to make the string behave like a file, which load_and_clean_companies can process
+            initial_df = utils.load_and_clean_companies(io.StringIO(debug_csv_string))
+        else:
+            initial_df = utils.load_and_clean_companies(config.INPUT_CSV_ORIGINAL)
+        # --- END DEBUG LOGIC ---
+
         if initial_df is not None:
             step_1_find_urls(initial_df, openai_client)
 
-    # Logic for scraping steps
-    if args.scrape_linkedin or args.scrape_websites or args.scrape_news or args.scrape_apps:
+    # Updated logic to include the new scraping step
+    if args.scrape_linkedin or args.scrape_websites or args.scrape_news or args.scrape_apps or args.scrape_deep_web:
         enriched_df = utils.load_enriched_data(config.OUTPUT_CSV_LINKEDIN)
         if enriched_df is None:
             print("Cannot run scraping. Please run with --find-urls first to generate the required input file.")
             return
 
+        # The rest of the scraping pipeline will naturally use the output from the --find-urls step.
+        # If you ran --find-urls in debug mode, institutions_linkedin.csv will only contain your debug companies.
+        
         if config.SAMPLE_SIZE and len(enriched_df) > config.SAMPLE_SIZE:
             sample_df = enriched_df.sample(n=config.SAMPLE_SIZE, random_state=config.RANDOM_STATE)
         else:
             sample_df = enriched_df
         
-        print(f"\nWill now process a sample of {len(sample_df)} companies for scraping:")
+        print(f"\nWill now process {len(sample_df)} companies for scraping:")
         for name in sample_df['Cleaned Name']: print(f"  - {name}")
 
         vector_store = utils.get_vector_store()
@@ -202,8 +258,12 @@ def main():
         if args.scrape_news:
             step_4_scrape_news(sample_df, vector_store)
         
-        if args.scrape_apps: # New step execution
+        if args.scrape_apps:
             step_5_scrape_apps(sample_df, vector_store)
+        
+        # New block to execute the deep web scraping step
+        if args.scrape_deep_web:
+            step_7_scrape_deep_web(sample_df, vector_store)
 
     if args.analyze:
         if not os.path.exists(config.FAISS_INDEX_PATH):

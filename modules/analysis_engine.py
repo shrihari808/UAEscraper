@@ -47,10 +47,19 @@ class AnalysisEngine:
             - What are its key features as described in the context?
             - Specify its ratings and number of reviews if available. Also specify the last updated date if available.
             - If no app is mentioned, state "No mobile app presence found in the provided data."
+        7.  **KEY FINTECH VERTICAL ANALYSIS (CRITICAL):**
+            - **Primary Focus:** Based on all available data, analyze the company's involvement, if any, in the following key areas.
+            - **Evidence Requirement:** For each area, you MUST provide direct quotes or strong evidence from the context. If no evidence is found, state "No signal found".
+            - **Signal Strength:** Classify the signal as 'Strong', 'Weak', or 'None'.
 
+            - **Buy Now, Pay Later (BNPL):** Is there any mention of installment payments, deferred payments, or partnerships with BNPL providers?
+            - **Remittance & Wallets:** Does the company offer digital wallets, cross-border money transfers, or payment gateway services?
+            - **Spend Management:** Are there products aimed at corporate expense tracking, budget management, or business-focused credit/debit cards?
+            - **Wealth Management (WealthTech):** Do they offer robo-advisory, digital brokerage, investment platforms, or high-net-worth individual services?
         **OUTPUT FORMAT:**
         Return a single, clean JSON object with the keys exactly as listed above. For "Company Metadata", ensure you include the "Name" of the company.
         For "Mobile App Presence", For each app provide a nested object with keys "Google Play" and "Apple App Store", each containing:app_name(string), has_app (boolean), purpose (string), key_features (list of strings), ratings (string), reviews (string), last_updated (string).
+        Ensure you add a new key "FintechVerticalAnalysis" containing nested objects for each of the key areas, with fields for "signal_strength" and "evidence".
         """
 
         prompt = ChatPromptTemplate.from_template(template)
