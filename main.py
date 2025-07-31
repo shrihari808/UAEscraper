@@ -14,6 +14,7 @@ import asyncio
 import threading
 import time
 import queue
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
@@ -25,6 +26,15 @@ from modules.news_scraper import NewsScraper
 from modules.app_scraper import AppScraper
 from modules.analysis_engine import AnalysisEngine
 from modules.deep_search_scraper import DeepSearchScraper
+from reporting import generate_excel_report
+
+# --- Utility Functions ---
+
+def sanitize_filename(filename):
+    """
+    Removes characters that are invalid in Windows filenames to prevent OS errors.
+    """
+    return re.sub(r'[\\/*?:"<>|]', "", filename)
 
 # --- Driver Pool Management ---
 
@@ -131,7 +141,7 @@ def step_2_scrape_linkedin(df, driver_pool):
     print("\n--- Step 2: Scraping LinkedIn Company Profiles (Parallel) ---")
     index_name = 'linkedin'
     vector_store = utils.get_vector_store(index_name)
-    tasks = [(row['Cleaned Name'], row['linkedin_url'], driver_pool) for _, row in df.iterrows()]
+    tasks = [(row['Cleaned Name'], row['linkedin_url'], driver_pool) for _, row in df.iterrows() if pd.notna(row['linkedin_url'])]
     all_documents = run_scraping_in_parallel(scrape_linkedin_for_company, tasks, config.SELENIUM_MAX_WORKERS)
     
     if all_documents:
@@ -144,7 +154,7 @@ def step_3_scrape_websites(df):
     print("\n--- Step 3: Scraping Company Websites (Async) ---")
     index_name = 'websites'
     vector_store = utils.get_vector_store(index_name)
-    tasks = [(row['Cleaned Name'], row.get('website_url')) for _, row in df.iterrows()]
+    tasks = [(row['Cleaned Name'], row.get('website_url')) for _, row in df.iterrows() if pd.notna(row.get('website_url'))]
     all_documents = asyncio.run(run_async_scraping_in_parallel(scrape_website_for_company_async, tasks))
 
     if all_documents:
@@ -242,13 +252,17 @@ def step_6_analyze_company(company_name, llm):
             os.makedirs(config.ANALYSIS_OUTPUT_DIR)
             print(f"   -> Created directory: {config.ANALYSIS_OUTPUT_DIR}")
 
-        output_filename = os.path.join(config.ANALYSIS_OUTPUT_DIR, f"{company_name.replace(' ', '_')}_analysis.json")
+        # Sanitize the company name to create a valid filename
+        sanitized_company_name = sanitize_filename(company_name)
+        output_filename = os.path.join(config.ANALYSIS_OUTPUT_DIR, f"{sanitized_company_name.replace(' ', '_')}_analysis.json")
         
-        with open(output_filename, "w") as f:
-            json.dump(analysis_result, f, indent=4)
-        print(f"\n✅ Analysis saved to '{output_filename}'")
-        print("\n--- Generated Intelligence ---")
-        print(json.dumps(analysis_result, indent=4))
+        try:
+            with open(output_filename, "w", encoding='utf-8') as f:
+                json.dump(analysis_result, f, indent=4)
+            print(f"   -> Analysis for '{company_name}' saved to '{output_filename}'")
+        except OSError as e:
+            print(f"❌ Could not write file for '{company_name}'. Filename '{output_filename}' is invalid. Error: {e}")
+
     else:
         print(f"❌ Analysis failed for {company_name}. Result: {analysis_result}")
 
@@ -262,8 +276,10 @@ def main():
     parser.add_argument('--scrape-news', action='store_true', help="Run Step 4: Scrape news articles and vectorize.")
     parser.add_argument('--scrape-apps', action='store_true', help="Run Step 5: Scrape App Stores and vectorize.")
     parser.add_argument('--scrape-deep-web', action='store_true', help="Run Step 7: Scrape deep web for partnerships, forums, etc.")
-    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 6: Analyze a specific company.")
     parser.add_argument('--all-scrape', action='store_true', help="Run all scraping steps (2, 3, 4, 5, 7).")
+    parser.add_argument('--analyze', type=str, metavar='COMPANY_NAME', help="Run Step 6: Analyze a specific company.")
+    parser.add_argument('--analyze-all', action='store_true', help="Run analysis for all companies and generate a report.")
+    parser.add_argument('--report-only', action='store_true', help="Generate Excel report from existing analysis files.")
     
     args = parser.parse_args()
 
@@ -271,16 +287,13 @@ def main():
         parser.print_help()
         return
 
-    # --- START: TEMPORARY DEBUGGING BLOCK ---
-    DEBUG_COMPANIES = ["Tabby", "Tamara"] 
-    # --- END: TEMPORARY DEBUGGING BLOCK ---
-
     openai_client = None
     if args.find_urls:
         openai_client = utils.get_openai_client()
         if not openai_client: return
         
-        initial_df = utils.load_and_clean_companies(config.INPUT_CSV_ORIGINAL)
+        # Use the new institutions_linkedin.csv as the primary input
+        initial_df = utils.load_and_clean_companies('institutions_linkedin.csv')
         if initial_df is not None:
             step_1_find_urls(initial_df, openai_client)
 
@@ -289,20 +302,14 @@ def main():
     other_scraping_steps = args.scrape_websites or args.scrape_apps or args.all_scrape
     
     if selenium_steps or other_scraping_steps:
-        enriched_df = None
-        if 'DEBUG_COMPANIES' in locals() and DEBUG_COMPANIES:
-            print(f"--- ⚠️  RUNNING IN DEBUG MODE FOR: {', '.join(DEBUG_COMPANIES)} ---")
-            debug_data = {'Institution Name': DEBUG_COMPANIES}
-            enriched_df = utils.load_and_clean_companies(io.StringIO(pd.DataFrame(debug_data).to_csv(index=False)))
-            enriched_df['linkedin_url'] = [f'https://www.linkedin.com/company/{name.lower()}' for name in DEBUG_COMPANIES]
-            enriched_df['website_url'] = [f'https://www.{name.lower()}.ai' for name in DEBUG_COMPANIES]
-        else:
-            enriched_df = utils.load_enriched_data(config.OUTPUT_CSV_LINKEDIN)
+        # Always load from the enriched CSV file for scraping steps
+        enriched_df = utils.load_enriched_data(config.OUTPUT_CSV_LINKEDIN)
 
         if enriched_df is None:
             print("Cannot run scraping. Please run with --find-urls first to generate the required input file.")
             return
         
+        # Process all companies in the file
         sample_df = enriched_df
         print(f"\nWill now process {len(sample_df)} companies for scraping:")
         for name in sample_df['Cleaned Name']: print(f"  - {name}")
@@ -334,12 +341,30 @@ def main():
             if driver_pool:
                 shutdown_driver_pool(driver_pool)
 
-    # --- Analysis Block ---
+    # --- Analysis & Reporting Block ---
     if args.analyze:
         llm = utils.get_llm()
         if not llm: return
-        
         step_6_analyze_company(args.analyze, llm)
+    
+    if args.analyze_all:
+        llm = utils.get_llm()
+        if not llm: return
+        
+        enriched_df = utils.load_enriched_data(config.OUTPUT_CSV_LINKEDIN)
+        if enriched_df is None:
+            print("❌ Cannot run --analyze-all. Please run --find-urls first to generate the required input file.")
+        else:
+            print(f"\n--- Analyzing all {len(enriched_df)} companies ---")
+            for _, row in enriched_df.iterrows():
+                company_name = row['Cleaned Name']
+                step_6_analyze_company(company_name, llm)
+            
+            # After all analyses are done, generate the Excel report
+            generate_excel_report()
+
+    if args.report_only:
+        generate_excel_report()
 
     print("\n\n🎉 --- Pipeline Finished --- 🎉")
 
