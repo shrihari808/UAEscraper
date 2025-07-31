@@ -4,6 +4,7 @@ import json
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import RunnablePassthrough
+import re
 
 import config
 
@@ -18,70 +19,112 @@ class AnalysisEngine:
     def _create_rag_chain(self):
         """Builds the LangChain Expression Language (LCEL) chain."""
         def get_company_specific_retriever(info):
+            """
+            Retrieves documents specific to the company and formats them
+            to include their source URL in the context provided to the LLM.
+            """
             company_name = info.get("company_name")
-            docs = self.vector_store.similarity_search(company_name, k=50) 
+            # Retrieve a broad set of documents that might be relevant
+            docs = self.vector_store.similarity_search(company_name, k=50)
+            # Filter down to documents that are explicitly tagged with the company's name
             filtered_docs = [doc for doc in docs if doc.metadata.get('company') == company_name]
-            return "\n---\n".join([doc.page_content for doc in filtered_docs])
+
+            # Format the context to explicitly include the source of each piece of information
+            context_with_sources = []
+            for doc in filtered_docs:
+                source = doc.metadata.get('source', 'N/A')
+                content = doc.page_content
+                context_with_sources.append(f"Source: {source}\nContent:\n{content}")
+
+            return "\n---\n".join(context_with_sources)
+
 
         # --- UPDATED PROMPT ---
+        # This new prompt template instructs the LLM to perform the deeper analysis required.
         template = """
-        You are a top-tier venture capital analyst and investigative journalist specializing in UAE Fintech, leveraging a financial-domain-specific language model (FinBERT) for information retrieval.
+        You are a top-tier venture capital analyst and investigative journalist specializing in UAE Fintech.
         Your task is to synthesize the provided data for "{company_name}" to extract deep, actionable intelligence.
+        You MUST cite the source for every piece of information you extract where specified in the output format.
 
         **CONTEXT (Retrieved from a finance-optimized Knowledge Base):**
+        Each block of information is preceded by its source URL.
         {context}
 
         **YOUR CORE OBJECTIVES (Synthesize all data to answer):**
-        1.  **Company Metadata:** Name, Sector, Location/Freezone, Stage (e.g., startup, growth, established), Founding Year.
-        2.  **Financial Offerings & Products:** What specific financial products do they offer (e.g., SME loans, real estate finance, asset financing)? What is their core value proposition?
+        1.  **Company Metadata:** Name, Company LinkedIn URL, Sector, Location/Freezone, Stage (e.g., startup, growth), Founding Year.
+        2.  **Financial Offerings & Products:** What specific financial products do they offer? What is their core value proposition?
         3.  **Strategic Focus & Signals:**
-            - **Digital Transformation:** What is their stage of digital adoption? Mention any use of cloud, AI, or mobile-first strategies.
-            - **Key Focus Areas:** Are they targeting retail, corporate, or SME clients? Any specific industry focus?
-            - **Partnerships & M&A:** Are there any mentions of partnerships, M&A activity, or key collaborations?
-            - **Growth Signals:** Are they hiring for specific tech or expansion roles? Any mention of new product launches or market expansion?
-        4.  **Decision Makers:** Key people and roles (e.g., CEO, CTO, Chief Strategy Officer, Head of AI).
-        5.  **Competitive Landscape (Implied):** Based on their offerings, who might be their key competitors in the UAE market? (Provide 1-2 names if possible).
+            - **Digital Transformation:** Stage of digital adoption (e.g., use of cloud, AI, mobile-first).
+            - **Key Focus Areas:** Target clients (retail, corporate, SME) and industry focus.
+            - **Partnerships & M&A:** Any mentions of partnerships, M&A, or key collaborations.
+            - **Growth Signals:** Hiring for tech/expansion roles, new product launches, market expansion.
+        4.  **People Intelligence:** List ALL people mentioned in the context. Include their full name, role, and a link to their personal LinkedIn profile if available in the context.
+        5.  **Competitive Landscape (Implied):** Based on their offerings, who might be their key competitors? (1-2 names).
         6.  **Mobile App Presence:**
             - Specify if they have an app on Google Play and/or Apple App Store.
-            - If an app exists, what is its primary purpose?
-            - What are its key features as described in the context?
-            - Specify its ratings and number of reviews if available. Also specify the last updated date if available.
+            - If an app exists, what is its purpose and key features?
+            - Specify ratings, reviews, and last updated date if available.
             - If no app is mentioned, state "No mobile app presence found in the provided data."
         7.  **KEY FINTECH VERTICAL ANALYSIS (CRITICAL):**
-            - **Primary Focus:** Based on all available data, analyze the company's involvement, if any, in the following key areas.
-            - **Evidence Requirement:** For each area, you MUST provide direct quotes or strong evidence from the context. If no evidence is found, state "No signal found".
+            - **Primary Focus:** Analyze involvement in: Buy Now, Pay Later (BNPL), Remittance & Wallets, Spend Management, and Wealth Management (WealthTech).
+            - **Evidence Requirement:** For each area, provide direct quotes or strong evidence from the context. If no evidence, state "No signal found".
             - **Signal Strength:** Classify the signal as 'Strong', 'Weak', or 'None'.
 
-            - **Buy Now, Pay Later (BNPL):** Is there any mention of installment payments, deferred payments, or partnerships with BNPL providers?
-            - **Remittance & Wallets:** Does the company offer digital wallets, cross-border money transfers, or payment gateway services?
-            - **Spend Management:** Are there products aimed at corporate expense tracking, budget management, or business-focused credit/debit cards?
-            - **Wealth Management (WealthTech):** Do they offer robo-advisory, digital brokerage, investment platforms, or high-net-worth individual services?
         **OUTPUT FORMAT:**
-        Return a single, clean JSON object with the keys exactly as listed above. For "Company Metadata", ensure you include the "Name" of the company.
-        For "Mobile App Presence", For each app provide a nested object with keys "Google Play" and "Apple App Store", each containing:app_name(string), has_app (boolean), purpose (string), key_features (list of strings), ratings (string), reviews (string), last_updated (string).
-        Ensure you add a new key "FintechVerticalAnalysis" containing nested objects for each of the key areas, with fields for "signal_strength" and "evidence".
+        Return a single, clean JSON object.
+        - The top-level keys must be: "CompanyMetadata", "FinancialOfferingsAndProducts", "StrategicFocusAndSignals", "PeopleIntelligence", "CompetitiveLandscape", "MobileAppPresence", "FintechVerticalAnalysis".
+        - For "CompanyMetadata", return simple key-value pairs (e.g., "Name": "Example Inc."). The keys are: "Name", "LinkedInURL", "Sector", "LocationFreezone", "Stage", "FoundingYear". Do NOT include sources for these fields.
+        - For the following keys, provide the value and the source URL in a nested object like this: {{"value": "The extracted information", "source": "The URL source for this specific information"}}:
+            - FinancialOfferingsAndProducts
+            - StrategicFocusAndSignals (and all its sub-keys like DigitalTransformation, KeyFocusAreas, etc.)
+            - CompetitiveLandscape
+        - For "PeopleIntelligence", the value should be a list of objects. Each object must have the keys "name", "role", "linkedin_url", and "source".
+        - For "MobileAppPresence", provide nested objects for "GooglePlay" and "AppleAppStore". The value for each should be an object containing the app details and a "source" key.
+        - For "FintechVerticalAnalysis", provide nested objects for each key area. Each object must have fields for "signal_strength", "evidence", and "source".
         """
 
         prompt = ChatPromptTemplate.from_template(template)
-        
-        # --- UPDATED OUTPUT PARSER to handle the new structure ---
+
+        # This custom parser is designed to be resilient to potential formatting issues from the LLM.
         class CustomJsonOutputParser(JsonOutputParser):
             def parse(self, text: str):
+                """
+                Parses the LLM output to extract a JSON object, even if it's
+                embedded in markdown code blocks or has other surrounding text.
+                """
                 try:
-                    # The LLM might return a JSON string that is not perfectly clean
-                    # We can try to find the JSON object within the text
-                    json_start = text.find('{')
-                    json_end = text.rfind('}') + 1
-                    if json_start != -1 and json_end != -1:
-                        text = text[json_start:json_end]
-                    return json.loads(text)
+                    # Method 1: Clean the text by removing markdown code blocks.
+                    cleaned_text = text.strip()
+                    
+                    # Regex to find content within ```json ... ``` or ``` ... ```
+                    code_block_pattern = r'```(?:json)?\s*(.*?)\s*```'
+                    match = re.search(code_block_pattern, cleaned_text, re.DOTALL)
+                    
+                    # If a markdown block is found, use its content.
+                    if match:
+                        cleaned_text = match.group(1).strip()
+                    
+                    # Method 2: Find the boundaries of the JSON object.
+                    json_start = cleaned_text.find('{')
+                    json_end = cleaned_text.rfind('}') + 1
+
+                    if json_start == -1 or json_end == 0:
+                        raise json.JSONDecodeError("No JSON object markers found in the cleaned output.", cleaned_text, 0)
+
+                    # Slice the string to get the JSON part.
+                    json_str = cleaned_text[json_start:json_end]
+                    
+                    # Parse and return the JSON object.
+                    return json.loads(json_str)
+
                 except json.JSONDecodeError as e:
-                    print(f"Error decoding JSON from LLM output: {e}")
-                    # Fallback to returning an error structure
+                    # If parsing fails, return an error structure with the raw text for debugging.
+                    print(f"Error decoding JSON from LLM output. Raw text: '{text}'. Error: {e}")
                     return {"error": "Failed to parse LLM JSON output", "raw_output": text}
 
         output_parser = CustomJsonOutputParser()
 
+        # The final chain definition, which pipes the context and company name through the prompt, to the LLM, and finally to the output parser.
         chain = (
             {"context": get_company_specific_retriever, "company_name": RunnablePassthrough()}
             | prompt
